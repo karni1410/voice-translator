@@ -7,7 +7,21 @@ import speech_recognition as sr
 from playsound import playsound
 from deep_translator import GoogleTranslator
 from google.transliteration import transliterate_text
+from tkinter import filedialog
+from pydub import AudioSegment
 
+from pydub import AudioSegment
+from pydub.utils import which
+
+# Set the paths for ffmpeg and ffprobe
+ffmpeg_path = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe"
+ffprobe_path = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffprobe.exe"
+
+# Tell PyDub where to find ffmpeg and ffprobe
+AudioSegment.converter = ffmpeg_path
+AudioSegment.ffprobe = ffprobe_path
+
+# Now proceed with your audio file upload logic
 
 # Create an instance of Tkinter frame or window
 win= tk.Tk()
@@ -50,6 +64,7 @@ language_codes = {
     "Gujarati": "gu",
     "Punjabi": "pa"
 }
+file_path = ""  # Initialize file_path variable
 
 language_names = list(language_codes.keys())
 
@@ -75,6 +90,62 @@ output_lang_label = tk.Label(win, text="Select Output Language:")
 output_lang_label.pack()
 
 output_lang = ttk.Combobox(win, values=language_names)
+def upload_audio_file():
+    # Open file dialog to upload the audio file
+    global file_path
+    file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav;*.mp3;*.m4a")])
+    
+    if not file_path:
+        return  # Exit if no file was selected
+
+    # Check if the file is an mp3 or m4a and convert to wav if needed
+    if file_path.endswith(".mp3"):
+        try:
+            sound = AudioSegment.from_mp3(file_path)
+            wav_path = file_path.replace(".mp3", "_converted.wav")
+            sound.export(wav_path, format="wav")
+            file_path = wav_path  # Update file path to the converted wav file
+        except Exception as e:
+            output_text.insert(tk.END, f"Error converting mp3: {str(e)}\n")
+            return
+    elif file_path.endswith(".m4a"):
+        try:
+            sound = AudioSegment.from_file(file_path, format="m4a")
+            wav_path = file_path.replace(".m4a", "_converted.wav")
+            sound.export(wav_path, format="wav")
+            file_path = wav_path  # Update file path to the converted wav file
+        except Exception as e:
+            output_text.insert(tk.END, f"Error converting m4a: {str(e)}\n")
+            return
+    elif not file_path.endswith(".wav"):
+        output_text.insert(tk.END, "Unsupported file format! Only MP3, M4A, or WAV are allowed.\n")
+        return
+
+    # Now we have a .wav file for processing
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(file_path) as source:
+            audio_data = recognizer.record(source)  # Record the audio
+            recognized_text = recognizer.recognize_google(audio_data)  # Recognize speech
+            input_text.insert(tk.END, f"Recognized Text: {recognized_text}\n")
+
+            # Translate the recognized text
+            translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(recognized_text)
+            output_text.insert(tk.END, f"Translated Text: {translated_text}\n")
+
+            # Convert translated text to speech and play it
+            tts = gTTS(translated_text, lang=output_lang.get())
+            tts.save("temp_output.mp3")
+            playsound("temp_output.mp3")
+            os.remove("temp_output.mp3")  # Clean up the temp file
+
+    except sr.UnknownValueError:
+        output_text.insert(tk.END, "Could not understand the audio file.\n")
+    except sr.RequestError:
+        output_text.insert(tk.END, "Error with the Google API.\n")
+    except Exception as e:
+        output_text.insert(tk.END, f"Error: {str(e)}\n")
+
 def update_output_lang_code(event):
     selected_language_name = event.widget.get()
     selected_language_code = language_codes[selected_language_name]
@@ -91,39 +162,34 @@ keep_running = False
 
 def update_translation():
     global keep_running
-
     if keep_running:
         r = sr.Recognizer()
-
         with sr.Microphone() as source:
             print("Speak Now!\n")
             audio = r.listen(source)
-            
+
             try:
                 speech_text = r.recognize_google(audio)
-                # print(speech_text)
                 speech_text_transliteration = transliterate_text(speech_text, lang_code=input_lang.get()) if input_lang.get() not in ('auto', 'en') else speech_text
                 input_text.insert(tk.END, f"{speech_text_transliteration}\n")
                 if speech_text.lower() in {'exit', 'stop'}:
                     keep_running = False
                     return
-                
-                translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(text=speech_text_transliteration)
-                # print(translated_text)
 
+                translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(text=speech_text_transliteration)
                 voice = gTTS(translated_text, lang=output_lang.get())
                 voice.save('voice.mp3')
                 playsound('voice.mp3')
                 os.remove('voice.mp3')
 
                 output_text.insert(tk.END, translated_text + "\n")
-                
+
             except sr.UnknownValueError:
                 output_text.insert(tk.END, "Could not understand!\n")
             except sr.RequestError:
                 output_text.insert(tk.END, "Could not request from Google!\n")
 
-    win.after(100, update_translation)
+        win.after(100, update_translation)  # Update again after 100ms to keep the loop running
 
 def run_translator():
     global keep_running
@@ -175,6 +241,45 @@ kill_button.place(relx=0.5, rely=0.9, anchor="c")
 # Open about page button
 about_button = tk.Button(win, text="About this project", command=open_about_page)
 about_button.place(relx=0.75, rely=0.9, anchor="c")
+
+upload_button = tk.Button(win, text="Upload Audio File", command=upload_audio_file)
+upload_button.place(relx=0.5, rely=0.85, anchor="c")
+
+def translate_audio_file():
+    # Trigger translation logic after uploading the audio
+    if not file_path:
+        output_text.insert(tk.END, "No audio file uploaded!\n")
+        return
+
+    # Proceed with the translation of the already uploaded audio file
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(file_path) as source:
+            audio_data = recognizer.record(source)  # Record the audio
+            recognized_text = recognizer.recognize_google(audio_data)  # Recognize speech
+            input_text.insert(tk.END, f"Recognized Text: {recognized_text}\n")
+
+            # Translate the recognized text
+            translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(recognized_text)
+            output_text.insert(tk.END, f"Translated Text: {translated_text}\n")
+
+            # Convert translated text to speech and play it
+            tts = gTTS(translated_text, lang=output_lang.get())
+            tts.save("temp_output.mp3")
+            playsound("temp_output.mp3")
+            os.remove("temp_output.mp3")  # Clean up the temp file
+
+    except sr.UnknownValueError:
+        output_text.insert(tk.END, "Could not understand the audio file.\n")
+    except sr.RequestError:
+        output_text.insert(tk.END, "Error with the Google API.\n")
+    except Exception as e:
+        output_text.insert(tk.END, f"Error: {str(e)}\n")
+
+
+# Create the "Translate Audio File" button next to the "Upload Audio File" button
+translate_button = tk.Button(win, text="Translate Audio File", command=translate_audio_file)
+translate_button.place(relx=0.5, rely=0.8, anchor="c")
 
 # Run the Tkinter event loop
 win.mainloop()
