@@ -1,285 +1,346 @@
 import os
 import threading
 import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
 from gtts import gTTS
-from tkinter import ttk
 import speech_recognition as sr
 from playsound import playsound
 from deep_translator import GoogleTranslator
-from google.transliteration import transliterate_text
-from tkinter import filedialog
 from pydub import AudioSegment
+import sqlite3
+import hashlib
+import asyncio
+import edge_tts
+import random
+import string
+import webbrowser
 
-from pydub import AudioSegment
-from pydub.utils import which
+# Set paths for ffmpeg
+AudioSegment.converter = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe"
+AudioSegment.ffprobe = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffprobe.exe"
 
-# Set the paths for ffmpeg and ffprobe
-ffmpeg_path = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe"
-ffprobe_path = r"C:\Users\karni\Downloads\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffprobe.exe"
-
-# Tell PyDub where to find ffmpeg and ffprobe
-AudioSegment.converter = ffmpeg_path
-AudioSegment.ffprobe = ffprobe_path
-
-# Now proceed with your audio file upload logic
-
-# Create an instance of Tkinter frame or window
-win= tk.Tk()
-
-# Set the geometry of tkinter frame
-win.geometry("700x450")
-win.title("Real-Time Voice🎙️ Translator🔊")
-icon = tk.PhotoImage(file="icon.png")
-win.iconphoto(False, icon)
-
-# Create labels and text boxes for the recognized and translated text
-input_label = tk.Label(win, text="Recognized Text ⮯")
-input_label.pack()
-input_text = tk.Text(win, height=5, width=50)
-input_text.pack()
-
-output_label = tk.Label(win, text="Translated Text ⮯")
-output_label.pack()
-output_text = tk.Text(win, height=5, width=50)
-output_text.pack()
-
-blank_space = tk.Label(win, text="")
-blank_space.pack()
-
-# Create a dictionary of language names and codes
-language_codes = {
-    "English": "en",
-    "Hindi": "hi",
-    "Bengali": "bn",
-    "Spanish": "es",
-    "Chinese (Simplified)": "zh-CN",
-    "Russian": "ru",
-    "Japanese": "ja",
-    "Korean": "ko",
-    "German": "de",
-    "French": "fr",
-    "Tamil": "ta",
-    "Telugu": "te",
-    "Kannada": "kn",
-    "Gujarati": "gu",
-    "Punjabi": "pa"
+# --- Language and Voice Mappings ---
+language_voice_map = {
+    "hi": {"Female": "hi-IN-SwaraNeural", "Male": "hi-IN-MadhurNeural"},
+    "en": {"Female": "en-US-JennyNeural", "Male": "en-US-GuyNeural"},
+    "es": {"Female": "es-ES-ElviraNeural", "Male": "es-ES-AlvaroNeural"},
+    "fr": {"Female": "fr-FR-DeniseNeural", "Male": "fr-FR-HenriNeural"},
+    "de": {"Female": "de-DE-KatjaNeural", "Male": "de-DE-ConradNeural"},
+    "ja": {"Female": "ja-JP-NanamiNeural", "Male": "ja-JP-KeitaNeural"},
+    "zh-CN": {"Female": "zh-CN-XiaoxiaoNeural", "Male": "zh-CN-YunxiNeural"},
+    "bn": {"Female": "bn-IN-TanishaaNeural", "Male": "bn-IN-TanishNeural"},
+    "ta": {"Female": "ta-IN-PallaviNeural", "Male": "ta-IN-ValluvarNeural"},
+    "te": {"Female": "te-IN-ShrutiNeural", "Male": "te-IN-MohanNeural"},
+    "kn": {"Female": "kn-IN-SapnaNeural", "Male": "kn-IN-GaganNeural"},
+    "gu": {"Female": "gu-IN-DhwaniNeural", "Male": "gu-IN-NiranjanNeural"},
+    "pa": {"Female": "pa-IN-HarmeetNeural", "Male": "pa-IN-BaldevNeural"},
+    "ko": {"Female": "ko-KR-SunHiNeural", "Male": "ko-KR-InJoonNeural"},
+    "ru": {"Female": "ru-RU-SvetlanaNeural", "Male": "ru-RU-DmitryNeural"},
 }
-file_path = ""  # Initialize file_path variable
 
-language_names = list(language_codes.keys())
+# --- User Authentication ---
+def init_db():
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS translations (
+                    translation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    input_text TEXT,
+                    output_text TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id))''')
 
-# Create dropdown menus for the input and output languages
-
-input_lang_label = tk.Label(win, text="Select Input Language:")
-input_lang_label.pack()
-
-input_lang = ttk.Combobox(win, values=language_names)
-def update_input_lang_code(event):
-    selected_language_name = event.widget.get()
-    selected_language_code = language_codes[selected_language_name]
-	# Update the selected language code
-    input_lang.set(selected_language_code)
-input_lang.bind("<<ComboboxSelected>>", lambda e: update_input_lang_code(e))
-if input_lang.get() == "": input_lang.set("auto")
-input_lang.pack()
-
-down_arrow = tk.Label(win, text="▼")
-down_arrow.pack()
-
-output_lang_label = tk.Label(win, text="Select Output Language:")
-output_lang_label.pack()
-
-output_lang = ttk.Combobox(win, values=language_names)
-def upload_audio_file():
-    # Open file dialog to upload the audio file
-    global file_path
-    file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav;*.mp3;*.m4a")])
-    
-    if not file_path:
-        return  # Exit if no file was selected
-
-    # Check if the file is an mp3 or m4a and convert to wav if needed
-    if file_path.endswith(".mp3"):
-        try:
-            sound = AudioSegment.from_mp3(file_path)
-            wav_path = file_path.replace(".mp3", "_converted.wav")
-            sound.export(wav_path, format="wav")
-            file_path = wav_path  # Update file path to the converted wav file
-        except Exception as e:
-            output_text.insert(tk.END, f"Error converting mp3: {str(e)}\n")
-            return
-    elif file_path.endswith(".m4a"):
-        try:
-            sound = AudioSegment.from_file(file_path, format="m4a")
-            wav_path = file_path.replace(".m4a", "_converted.wav")
-            sound.export(wav_path, format="wav")
-            file_path = wav_path  # Update file path to the converted wav file
-        except Exception as e:
-            output_text.insert(tk.END, f"Error converting m4a: {str(e)}\n")
-            return
-    elif not file_path.endswith(".wav"):
-        output_text.insert(tk.END, "Unsupported file format! Only MP3, M4A, or WAV are allowed.\n")
+    conn.commit()
+    conn.close()
+def store_translation(user_id, input_text, output_text):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO translations (user_id, input_text, output_text) VALUES (?, ?, ?)",
+              (user_id, input_text, output_text))
+    conn.commit()
+    conn.close()
+def fetch_translation_history(user_id):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("SELECT input_text, output_text FROM translations WHERE user_id = ?", (user_id,))
+    translations = c.fetchall()
+    conn.close()
+    print(f"Translations: {translations}")
+    return translations
+def show_translation_history(user_id):
+    translations = fetch_translation_history(user_id)
+    if not translations:
+        messagebox.showinfo("History", "No translation history found.")
         return
 
-    # Now we have a .wav file for processing
-    recognizer = sr.Recognizer()
-    try:
-        with sr.AudioFile(file_path) as source:
-            audio_data = recognizer.record(source)  # Record the audio
-            recognized_text = recognizer.recognize_google(audio_data)  # Recognize speech
-            input_text.insert(tk.END, f"Recognized Text: {recognized_text}\n")
+    history_window = tk.Toplevel()
+    history_window.title("Translation History")
 
-            # Translate the recognized text
-            translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(recognized_text)
-            output_text.insert(tk.END, f"Translated Text: {translated_text}\n")
+    for idx, (input_text, output_text) in enumerate(translations):
+        tk.Label(history_window, text=f"Translation {idx + 1}").pack(pady=5)
+        tk.Label(history_window, text=f"Input: {input_text}").pack(pady=5)
+        tk.Label(history_window, text=f"Output: {output_text}").pack(pady=5)
 
-            # Convert translated text to speech and play it
-            tts = gTTS(translated_text, lang=output_lang.get())
-            tts.save("temp_output.mp3")
-            playsound("temp_output.mp3")
-            os.remove("temp_output.mp3")  # Clean up the temp file
+    history_window.mainloop()
 
-    except sr.UnknownValueError:
-        output_text.insert(tk.END, "Could not understand the audio file.\n")
-    except sr.RequestError:
-        output_text.insert(tk.END, "Error with the Google API.\n")
-    except Exception as e:
-        output_text.insert(tk.END, f"Error: {str(e)}\n")
 
-def update_output_lang_code(event):
-    selected_language_name = event.widget.get()
-    selected_language_code = language_codes[selected_language_name]
-    # Update the selected language code
-    output_lang.set(selected_language_code)
-output_lang.bind("<<ComboboxSelected>>", lambda e: update_output_lang_code(e))
-if output_lang.get() == "": output_lang.set("en")
-output_lang.pack()
 
-blank_space = tk.Label(win, text="")
-blank_space.pack()
-
-keep_running = False
-
-def update_translation():
-    global keep_running
-    if keep_running:
-        r = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("Speak Now!\n")
-            audio = r.listen(source)
-
-            try:
-                speech_text = r.recognize_google(audio)
-                speech_text_transliteration = transliterate_text(speech_text, lang_code=input_lang.get()) if input_lang.get() not in ('auto', 'en') else speech_text
-                input_text.insert(tk.END, f"{speech_text_transliteration}\n")
-                if speech_text.lower() in {'exit', 'stop'}:
-                    keep_running = False
-                    return
-
-                translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(text=speech_text_transliteration)
-                voice = gTTS(translated_text, lang=output_lang.get())
-                voice.save('voice.mp3')
-                playsound('voice.mp3')
-                os.remove('voice.mp3')
-
-                output_text.insert(tk.END, translated_text + "\n")
-
-            except sr.UnknownValueError:
-                output_text.insert(tk.END, "Could not understand!\n")
-            except sr.RequestError:
-                output_text.insert(tk.END, "Could not request from Google!\n")
-
-        win.after(100, update_translation)  # Update again after 100ms to keep the loop running
-
-def run_translator():
-    global keep_running
     
-    if not keep_running:
-        keep_running = True
-        update_translation_thread = threading.Thread(target=update_translation)        # using multi threading for efficient cpu usage
-        update_translation_thread.start()
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def kill_execution():
-    global keep_running
+def register_user():
+    username = reg_username_entry.get()
+    password = reg_password_entry.get()
+    if username and password:
+        conn = sqlite3.connect("users.db")
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hash_password(password)))
+            conn.commit()
+            messagebox.showinfo("Success", "Registration successful!")
+            register_window.destroy()
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "Username already exists!")
+        conn.close()
+    else:
+        messagebox.showerror("Error", "Please fill all fields.")
+
+def login_user():
+    username = login_username_entry.get()
+    password = login_password_entry.get()
+    if username and password:
+        conn = sqlite3.connect("users.db")
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, hash_password(password)))
+        result = c.fetchone()
+        conn.close()
+        if result:
+            user_id, username, _ = result
+            print(f"User ID: {user_id}")
+            messagebox.showinfo("Success", "Login successful!")
+            login_window.destroy()
+            launch_main_app(user_id,username)
+        else:
+            messagebox.showerror("Error", "Invalid username or password.")
+    else:
+        messagebox.showerror("Error", "Please fill all fields.")
+
+# --- Windows ---
+def show_login():
+    global login_window, login_username_entry, login_password_entry
+    login_window = tk.Tk()
+    login_window.geometry("350x250")
+    login_window.title("Login")
+
+    tk.Label(login_window, text="Username:").pack(pady=5)
+    login_username_entry = tk.Entry(login_window)
+    login_username_entry.pack()
+
+    tk.Label(login_window, text="Password:").pack(pady=5)
+    login_password_entry = tk.Entry(login_window, show="*")
+    login_password_entry.pack()
+
+    tk.Button(login_window, text="Login", command=login_user).pack(pady=10)
+    tk.Button(login_window, text="Register", command=show_register).pack()
+
+    login_window.mainloop()
+
+def show_register():
+    global register_window, reg_username_entry, reg_password_entry
+    register_window = tk.Toplevel()
+    register_window.geometry("350x250")
+    register_window.title("Register")
+
+    tk.Label(register_window, text="Username:").pack(pady=5)
+    reg_username_entry = tk.Entry(register_window)
+    reg_username_entry.pack()
+
+    tk.Label(register_window, text="Password:").pack(pady=5)
+    reg_password_entry = tk.Entry(register_window, show="*")
+    reg_password_entry.pack()
+
+    tk.Button(register_window, text="Register", command=register_user).pack(pady=10)
+
+def launch_main_app(user_id,username):
+    global win, gender_var, input_lang, output_lang,current_user_id
+    current_user_id = user_id
+    win = tk.Tk()
+    win.geometry("750x600")
+    win.title(f"Real-Time Voice Translator - User: {username}")
+
+    try:
+        icon = tk.PhotoImage(file="icon.png")
+        win.iconphoto(False, icon)
+    except Exception:
+        pass
+
+    # Language setup
+    global language_codes, language_names, file_path, keep_running
+    language_codes = {
+        "English": "en",
+        "Hindi": "hi",
+        "Bengali": "bn",
+        "Spanish": "es",
+        "Chinese (Simplified)": "zh-CN",
+        "Russian": "ru",
+        "Japanese": "ja",
+        "Korean": "ko",
+        "German": "de",
+        "French": "fr",
+        "Tamil": "ta",
+        "Telugu": "te",
+        "Kannada": "kn",
+        "Gujarati": "gu",
+        "Punjabi": "pa"
+    }
+    language_names = list(language_codes.keys())
+    file_path = ""
     keep_running = False
+    gender_var = tk.StringVar(value="Default")
 
-def open_about_page():      # about page
-    about_window = tk.Toplevel()
-    about_window.title("About")
-    about_window.iconphoto(False, icon)
+    # Functions inside main
+    def upload_audio_file():
+        global file_path
+        file_path = filedialog.askopenfilename(filetypes=[("Audio Files", ".wav .mp3 .m4a")])
+        if file_path:
+            convert_audio_if_needed()
 
-    # Create a link to the GitHub repository
-    github_link = ttk.Label(about_window, text="github.com/SamirPaulb/real-time-voice-translator", underline=True, foreground="blue", cursor="hand2")
-    github_link.bind("<Button-1>", lambda e: open_webpage("https://github.com/SamirPaulb/real-time-voice-translator"))
-    github_link.pack()
+    def convert_audio_if_needed():
+        global file_path
+        if file_path.endswith(".mp3") or file_path.endswith(".m4a"):
+            try:
+                ext = file_path.split(".")[-1]
+                audio = AudioSegment.from_file(file_path, format=ext)
+                new_file = file_path.replace(f".{ext}", "_converted.wav")
+                audio.export(new_file, format="wav")
+                file_path = new_file
+            except Exception as e:
+                output_text.insert(tk.END, f"Conversion Error: {e}\n")
 
-    # Create a text widget to display the about text
-    about_text = tk.Text(about_window, height=10, width=50)
-    about_text.insert("1.0", """
-    A machine learning project that translates voice from one language to another in real time while preserving the tone and emotion of the speaker, and outputs the result in MP3 format. Choose input and output languages from the dropdown menu and start the translation!
-    """)
-    about_text.pack()
+    def process_audio_file():
+        global file_path
+        if not file_path:
+            output_text.insert(tk.END, "No audio file uploaded!\n")
+            return
+        recognizer = sr.Recognizer()
+        try:
+            with sr.AudioFile(file_path) as source:
+                audio_data = recognizer.record(source)
+                recognized_text = recognizer.recognize_google(audio_data)
+                input_text.delete("1.0", tk.END)  # Clear previous
+                output_text.delete("1.0", tk.END)
+                input_text.insert(tk.END, recognized_text + "\n")
 
-    # Create a "Close" button
-    close_button = tk.Button(about_window, text="Close", command=about_window.destroy)
-    close_button.pack()
+                translated = GoogleTranslator(source="auto", target=language_codes.get(output_lang.get(), "en")).translate(recognized_text)
+                output_text.insert(tk.END, translated + "\n")
+                store_translation(current_user_id, recognized_text, translated)
 
-def open_webpage(url):      # Opens a web page in the user's default web browser.
-    import webbrowser
-    webbrowser.open(url)
+                speak(translated)
+                file_path = ""  # Clear path after processing
+
+        except Exception as e:
+            output_text.insert(tk.END, f"Processing Error: {e}\n")
+
+    async def speak_edge(text):
+        try:
+            lang_code = language_codes.get(output_lang.get(), "en")
+            voices = language_voice_map.get(lang_code, language_voice_map["en"])
+            voice = voices.get(gender_var.get(), voices["Female"])
+
+            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+            filename = f"output_{random_suffix}.mp3"
+
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(filename)
+
+            playsound(filename)
+
+            # Now safe to delete
+            os.remove(filename)
+
+        except Exception as e:
+            output_text.insert(tk.END, f"TTS Error: {e}\n")
+
+    def speak(text):
+        asyncio.run(speak_edge(text))
+
+    def start_translation():
+        global keep_running
+        keep_running = True
+        threading.Thread(target=listen_translate, daemon=True).start()
+
+    def listen_translate():
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)  # Important!
+            while keep_running:
+                try:
+                    output_text.insert(tk.END, "Listening...\n")
+                    audio = recognizer.listen(source, timeout=5)
+                    recognized = recognizer.recognize_google(audio)
+                    
+                    input_text.delete("1.0", tk.END)
+                    output_text.delete("1.0", tk.END)
+
+                    input_text.insert(tk.END, recognized + "\n")
+
+                    translated = GoogleTranslator(source="auto", target=language_codes.get(output_lang.get(), "en")).translate(recognized)
+                    output_text.insert(tk.END, translated + "\n")
+                    store_translation(current_user_id, recognized, translated)
+
+                    speak(translated)
+
+                    if recognized.lower() in ["exit", "stop"]:
+                        break
+
+                except sr.WaitTimeoutError:
+                    output_text.insert(tk.END, "Listening timed out. No speech detected.\n")
+                except sr.UnknownValueError:
+                    output_text.insert(tk.END, "Could not understand audio.\n")
+                except Exception as e:
+                    output_text.insert(tk.END, f"Error: {e}\n")
 
 
+    def stop_translation():
+        global keep_running
+        keep_running = False
 
-# Create the "Run" button
-run_button = tk.Button(win, text="Start Translation", command=run_translator)
-run_button.place(relx=0.25, rely=0.9, anchor="c")
+    def open_about():
+        webbrowser.open("https://github.com/SamirPaulb/real-time-voice-translator")
 
-# Create the "Kill" button
-kill_button = tk.Button(win, text="Kill Execution", command=kill_execution)
-kill_button.place(relx=0.5, rely=0.9, anchor="c")
+    # GUI
+    tk.Label(win, text="Recognized Text").pack()
+    input_text = tk.Text(win, height=5)
+    input_text.pack()
 
-# Open about page button
-about_button = tk.Button(win, text="About this project", command=open_about_page)
-about_button.place(relx=0.75, rely=0.9, anchor="c")
+    tk.Label(win, text="Translated Text").pack()
+    output_text = tk.Text(win, height=5)
+    output_text.pack()
 
-upload_button = tk.Button(win, text="Upload Audio File", command=upload_audio_file)
-upload_button.place(relx=0.5, rely=0.85, anchor="c")
+    tk.Label(win, text="Input Language").pack()
+    input_lang = ttk.Combobox(win, values=language_names)
+    input_lang.set("English")
+    input_lang.pack()
 
-def translate_audio_file():
-    # Trigger translation logic after uploading the audio
-    if not file_path:
-        output_text.insert(tk.END, "No audio file uploaded!\n")
-        return
+    tk.Label(win, text="Output Language").pack()
+    output_lang = ttk.Combobox(win, values=language_names)
+    output_lang.set("English")
+    output_lang.pack()
 
-    # Proceed with the translation of the already uploaded audio file
-    recognizer = sr.Recognizer()
-    try:
-        with sr.AudioFile(file_path) as source:
-            audio_data = recognizer.record(source)  # Record the audio
-            recognized_text = recognizer.recognize_google(audio_data)  # Recognize speech
-            input_text.insert(tk.END, f"Recognized Text: {recognized_text}\n")
+    tk.Label(win, text="Voice Gender").pack()
+    gender_combo = ttk.Combobox(win, textvariable=gender_var, values=["Default", "Female", "Male"])
+    gender_combo.pack()
 
-            # Translate the recognized text
-            translated_text = GoogleTranslator(source=input_lang.get(), target=output_lang.get()).translate(recognized_text)
-            output_text.insert(tk.END, f"Translated Text: {translated_text}\n")
+    tk.Button(win, text="Start Listening", command=start_translation).pack(pady=5)
+    tk.Button(win, text="Stop Listening", command=stop_translation).pack(pady=5)
+    tk.Button(win, text="Upload Audio", command=upload_audio_file).pack(pady=5)
+    tk.Button(win, text="Translate Uploaded File", command=process_audio_file).pack(pady=5)
+    tk.Button(win, text="About Project", command=open_about).pack(pady=5)
+    tk.Button(win, text="View Translation History", command=lambda: show_translation_history(user_id)).pack(pady=5)
+    win.mainloop()
 
-            # Convert translated text to speech and play it
-            tts = gTTS(translated_text, lang=output_lang.get())
-            tts.save("temp_output.mp3")
-            playsound("temp_output.mp3")
-            os.remove("temp_output.mp3")  # Clean up the temp file
-
-    except sr.UnknownValueError:
-        output_text.insert(tk.END, "Could not understand the audio file.\n")
-    except sr.RequestError:
-        output_text.insert(tk.END, "Error with the Google API.\n")
-    except Exception as e:
-        output_text.insert(tk.END, f"Error: {str(e)}\n")
-
-
-# Create the "Translate Audio File" button next to the "Upload Audio File" button
-translate_button = tk.Button(win, text="Translate Audio File", command=translate_audio_file)
-translate_button.place(relx=0.5, rely=0.8, anchor="c")
-
-# Run the Tkinter event loop
-win.mainloop()
+# --- Start ---
+if __name__ == "__main__":
+    init_db()
+    show_login()

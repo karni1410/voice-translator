@@ -1,0 +1,11 @@
+Recognized Text: Recognized: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Recognized Text: Recognized: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Recognized: hello my name is Milan fine I am doing very fine how are you doing tell me this in Hindi
+Recognized Text: Recognized: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Recognized: hello my name is Milan fine I am doing very fine how are you doing tell me this in Hindi
+Recognized Text: Recognized: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Recognized Text: Recognized: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Translated Text: Translated: hello my name is Karni Singh Rathore and I study in BMS College of Engineering please convert this into Hindi and let me know what is the result
+Recognized Audio File: audio_history\6e78699ba4894b46b2539309f9242139_recognized.mp3
+Translated Audio File: audio_history\6a69baac09124133af8b6bd355c408fd_translated.mp3
+----------------------------------------
